@@ -5,6 +5,14 @@ const router = express.Router();
 router.use(express.json());
 router.use(express.urlencoded({ extended: true }));
 
+// Make sure db is available
+router.use((req, res, next) => {
+    if (!req.db && req.app && req.app.get) {
+        req.db = req.app.get('db');
+    }
+    next();
+});
+
 // ============================================
 // HELPER FUNCTION: Get or Create Cart
 // ============================================
@@ -88,7 +96,7 @@ router.get("/api/cart", async (req, res) => {
 });
 
 // ============================================
-// API: ADD ITEM TO CART (WITH STOCK LIMIT CHECK - FIXED)
+// API: ADD ITEM TO CART (WITH STOCK LIMIT CHECK)
 // ============================================
 router.post("/api/cart/add", async (req, res) => {
     if (!req.session || !req.session.user) {
@@ -108,7 +116,6 @@ router.post("/api/cart/add", async (req, res) => {
         });
     }
     
-    // Validate quantity is positive
     if (quantity <= 0) {
         return res.status(400).json({ 
             success: false, 
@@ -134,7 +141,6 @@ router.post("/api/cart/add", async (req, res) => {
         const availableStock = parseInt(product.stock_quantity) || 0;
         const unitPrice = parseFloat(product.price);
         
-        // Check if product is out of stock
         if (availableStock === 0) {
             return res.status(400).json({ 
                 success: false, 
@@ -142,7 +148,6 @@ router.post("/api/cart/add", async (req, res) => {
             });
         }
         
-        // Check if requested quantity exceeds available stock
         if (quantity > availableStock) {
             return res.status(400).json({ 
                 success: false, 
@@ -159,7 +164,6 @@ router.post("/api/cart/add", async (req, res) => {
         );
         
         if (existingResult.rows.length > 0) {
-            // Check if new total quantity exceeds stock
             const currentQuantity = existingResult.rows[0].quantity;
             const newQuantity = currentQuantity + quantity;
             
@@ -184,7 +188,6 @@ router.post("/api/cart/add", async (req, res) => {
                 remaining_stock: availableStock - newQuantity
             });
         } else {
-            // Add new item
             await req.db.query(
                 'INSERT INTO cart_items (cart_id, product_id, quantity, unit_price) VALUES ($1, $2, $3, $4)',
                 [cartId, product_id, quantity, unitPrice]
@@ -208,7 +211,7 @@ router.post("/api/cart/add", async (req, res) => {
 });
 
 // ============================================
-// API: UPDATE CART ITEM QUANTITY (WITH STOCK LIMIT CHECK - FIXED)
+// API: UPDATE CART ITEM QUANTITY (WITH STOCK LIMIT CHECK)
 // ============================================
 router.post("/api/cart/update", async (req, res) => {
     if (!req.session || !req.session.user) {
@@ -235,7 +238,6 @@ router.post("/api/cart/update", async (req, res) => {
                 message: 'Item removed from cart' 
             });
         } else {
-            // Get the product_id from cart_item and check stock
             const itemResult = await req.db.query(
                 `SELECT ci.product_id, p.stock_quantity, p.name
                  FROM cart_items ci 
@@ -356,12 +358,10 @@ router.post("/api/cart/clear", async (req, res) => {
     const userId = req.session.user.id;
     
     try {
-        const query = `
-            DELETE FROM cart_items 
-            WHERE cart_id IN (SELECT id FROM cart WHERE user_id = $1)
-        `;
-        
-        await req.db.query(query, [userId]);
+        await req.db.query(
+            'DELETE FROM cart_items WHERE cart_id IN (SELECT id FROM cart WHERE user_id = $1)',
+            [userId]
+        );
         
         res.json({ 
             success: true, 
